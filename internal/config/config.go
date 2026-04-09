@@ -1,92 +1,82 @@
 package config
 
 import (
-	"encoding/json"
+	"errors"
 	"os"
-	"time"
+
+	"gopkg.in/yaml.v3"
+
+	"github.com/user/portwatch/internal/filter"
 )
 
-// Default values
-const (
-	DefaultInterval  = 30 * time.Second
-	DefaultStatePath = "/tmp/portwatch_state.json"
-	DefaultHost      = "localhost"
-)
-
-// Config holds the runtime configuration for portwatch.
+// Config holds the full portwatch configuration.
 type Config struct {
-	// Host to scan (default: localhost)
-	Host string `json:"host"`
+	ScanInterval int           `yaml:"scan_interval"` // seconds
+	PortRange    PortRange     `yaml:"port_range"`
+	StateFile    string        `yaml:"state_file"`
+	AlertLog     string        `yaml:"alert_log"`
+	Ignore       []FilterEntry `yaml:"ignore"`
+}
 
-	// PortRangeStart is the first port in the scan range (inclusive).
-	PortRangeStart int `json:"port_range_start"`
+// PortRange defines the inclusive range of ports to scan.
+type PortRange struct {
+	Min uint16 `yaml:"min"`
+	Max uint16 `yaml:"max"`
+}
 
-	// PortRangeEnd is the last port in the scan range (inclusive).
-	PortRangeEnd int `json:"port_range_end"`
-
-	// Interval between scans.
-	Interval time.Duration `json:"interval"`
-
-	// StatePath is the file path used to persist port state.
-	StatePath string `json:"state_path"`
-
-	// AlertOnStart controls whether an alert is emitted on the first scan.
-	AlertOnStart bool `json:"alert_on_start"`
+// FilterEntry maps to a filter.Rule in YAML form.
+type FilterEntry struct {
+	MinPort   uint16   `yaml:"min_port"`
+	MaxPort   uint16   `yaml:"max_port"`
+	Protocols []string `yaml:"protocols"`
 }
 
 // Default returns a Config populated with sensible defaults.
 func Default() *Config {
 	return &Config{
-		Host:           DefaultHost,
-		PortRangeStart: 1,
-		PortRangeEnd:   65535,
-		Interval:       DefaultInterval,
-		StatePath:      DefaultStatePath,
-		AlertOnStart:   false,
+		ScanInterval: 60,
+		PortRange:    PortRange{Min: 1, Max: 65535},
+		StateFile:    "/var/lib/portwatch/state.json",
+		AlertLog:     "",
 	}
 }
 
-// Load reads a JSON config file from path and returns a Config.
-// Fields not present in the file retain their zero values; callers
-// should start from Default() and merge if desired.
+// Load reads a YAML config file, falling back to defaults for missing fields.
 func Load(path string) (*Config, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
 	cfg := Default()
-	if err := json.NewDecoder(f).Decode(cfg); err != nil {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return cfg, nil
+		}
 		return nil, err
 	}
-	return cfg, nil
+	if err := yaml.Unmarshal(data, cfg); err != nil {
+		return nil, err
+	}
+	return cfg, cfg.Validate()
 }
 
-// Validate returns an error if the configuration contains invalid values.
+// Validate checks that the configuration values are sensible.
 func (c *Config) Validate() error {
-	if c.PortRangeStart < 1 || c.PortRangeStart > 65535 {
-		return &ValidationError{Field: "port_range_start", Value: c.PortRangeStart, Msg: "must be between 1 and 65535"}
+	if c.ScanInterval <= 0 {
+		return errors.New("scan_interval must be greater than 0")
 	}
-	if c.PortRangeEnd < 1 || c.PortRangeEnd > 65535 {
-		return &ValidationError{Field: "port_range_end", Value: c.PortRangeEnd, Msg: "must be between 1 and 65535"}
-	}
-	if c.PortRangeStart > c.PortRangeEnd {
-		return &ValidationError{Field: "port_range_start", Value: c.PortRangeStart, Msg: "must be less than or equal to port_range_end"}
-	}
-	if c.Interval <= 0 {
-		return &ValidationError{Field: "interval", Value: int(c.Interval), Msg: "must be positive"}
+	if c.PortRange.Min > c.PortRange.Max {
+		return errors.New("port_range min must be <= max")
 	}
 	return nil
 }
 
-// ValidationError describes a configuration validation failure.
-type ValidationError struct {
-	Field string
-	Value int
-	Msg   string
-}
-
-func (e *ValidationError) Error() string {
-	return "config: field \"" + e.Field + "\": " + e.Msg
+// IgnoreFilter builds a filter.Filter from the Ignore entries.
+func (c *Config) IgnoreFilter() *filter.Filter {
+	var rules []filter.Rule
+	for _, e := range c.Ignore {
+		rules = append(rules, filter.Rule{
+			MinPort:   e.MinPort,
+			MaxPort:   e.MaxPort,
+			Protocols: e.Protocols,
+		})
+	}
+	return filter.New(rules)
 }
