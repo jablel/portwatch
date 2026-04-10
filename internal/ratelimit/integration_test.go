@@ -64,3 +64,25 @@ func TestLimiter_ResetAllUnblocksEverything(t *testing.T) {
 		}
 	}
 }
+
+// TestLimiter_AllowsAfterCooldownExpires verifies that a key becomes
+// allowed again once its cooldown window has elapsed.
+func TestLimiter_AllowsAfterCooldownExpires(t *testing.T) {
+	cooldown := 50 * time.Millisecond
+	l := ratelimit.New(cooldown)
+
+	key := "added:3000/tcp"
+
+	if !l.Allow(key) {
+		t.Fatal("expected first call to be allowed")
+	}
+	if l.Allow(key) {
+		t.Fatal("expected second call to be blocked within cooldown")
+	}
+
+	time.Sleep(cooldown + 10*time.Millisecond)
+
+	if !l.Allow(key) {
+		t.Fatal("expected call to be allowed after cooldown expired")
+	}
+}
