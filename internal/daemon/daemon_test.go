@@ -72,3 +72,22 @@ func TestDaemon_WritesStateFile(t *testing.T) {
 		t.Error("expected state file to be written, but it does not exist")
 	}
 }
+
+func TestDaemon_RunsMultipleTicks(t *testing.T) {
+	cfg := testConfig(t)
+	var buf bytes.Buffer
+	alerter := alert.New(&buf)
+
+	d := daemon.New(cfg, alerter)
+
+	// Allow enough time for at least 3 ticks at 50ms interval
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	_ = d.Run(ctx)
+
+	// State file should exist after multiple ticks
+	if _, err := os.Stat(cfg.StateFile); os.IsNotExist(err) {
+		t.Error("expected state file to exist after multiple ticks")
+	}
+}
