@@ -1,6 +1,5 @@
-// Package ratelimit provides per-key rate limiting for alert suppression.
-// It prevents alert flooding by enforcing a minimum interval between
-// successive alerts for the same port or event key.
+// Package ratelimit provides per-key cooldown-based rate limiting for port
+// change events. It prevents alert storms when a port flaps rapidly.
 package ratelimit
 
 import (
@@ -8,26 +7,27 @@ import (
 	"time"
 )
 
-// Limiter tracks the last emission time per key and enforces a cooldown.
+// Limiter tracks the last allowed time for each key and suppresses subsequent
+// calls that arrive within the configured cooldown window.
 type Limiter struct {
 	mu       sync.Mutex
-	last     map[string]time.Time
 	cooldown time.Duration
+	last     map[string]time.Time
 	now      func() time.Time
 }
 
-// New creates a Limiter with the given cooldown duration.
-// A zero or negative cooldown disables rate limiting (all events pass).
+// New returns a Limiter with the given cooldown duration.
+// A zero or negative cooldown means every call is allowed.
 func New(cooldown time.Duration) *Limiter {
 	return &Limiter{
-		last:     make(map[string]time.Time),
 		cooldown: cooldown,
+		last:     make(map[string]time.Time),
 		now:      time.Now,
 	}
 }
 
 // Allow returns true if the key has not been seen within the cooldown window.
-// If allowed, the key's timestamp is updated to now.
+// The first call for any key always returns true.
 func (l *Limiter) Allow(key string) bool {
 	if l.cooldown <= 0 {
 		return true
@@ -42,35 +42,24 @@ func (l *Limiter) Allow(key string) bool {
 	return true
 }
 
-// Reset clears the recorded timestamp for a key, allowing it immediately.
+// Reset removes the cooldown record for a single key, allowing the next call
+// through immediately.
 func (l *Limiter) Reset(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	delete(l.last, key)
 }
 
-// ResetAll clears all recorded timestamps.
+// ResetAll clears all cooldown records.
 func (l *Limiter) ResetAll() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.last = make(map[string]time.Time)
 }
 
-// Remaining returns the duration until the key is allowed again.
-// Returns zero if the key is currently allowed.
-func (l *Limiter) Remaining(key string) time.Duration {
-	if l.cooldown <= 0 {
-		return 0
-	}
+// Len returns the number of keys currently tracked.
+func (l *Limiter) Len() int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	t, ok := l.last[key]
-	if !ok {
-		return 0
-	}
-	elapsed := l.now().Sub(t)
-	if elapsed >= l.cooldown {
-		return 0
-	}
-	return l.cooldown - elapsed
+	return len(l.last)
 }

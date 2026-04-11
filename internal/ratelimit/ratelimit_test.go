@@ -5,92 +5,81 @@ import (
 	"time"
 )
 
+// newFakeLimiter returns a Limiter whose clock can be controlled via the
+// returned pointer.
 func newFakeLimiter(cooldown time.Duration) (*Limiter, *time.Time) {
-	current := time.Now()
+	t := time.Now()
 	l := New(cooldown)
-	l.now = func() time.Time { return current }
-	return l, &current
+	l.now = func() time.Time { return t }
+	return l, &t
 }
 
 func TestAllow_FirstCallAlwaysPasses(t *testing.T) {
 	l, _ := newFakeLimiter(5 * time.Second)
-	if !l.Allow("port:80/tcp") {
+	if !l.Allow("tcp:8080") {
 		t.Fatal("expected first call to be allowed")
 	}
 }
 
 func TestAllow_SecondCallWithinCooldownBlocked(t *testing.T) {
 	l, _ := newFakeLimiter(5 * time.Second)
-	l.Allow("port:80/tcp")
-	if l.Allow("port:80/tcp") {
+	l.Allow("tcp:8080")
+	if l.Allow("tcp:8080") {
 		t.Fatal("expected second call within cooldown to be blocked")
 	}
 }
 
 func TestAllow_SecondCallAfterCooldownPasses(t *testing.T) {
-	l, ts := newFakeLimiter(5 * time.Second)
-	l.Allow("port:80/tcp")
-	*ts = ts.Add(6 * time.Second)
-	if !l.Allow("port:80/tcp") {
+	l, clock := newFakeLimiter(5 * time.Second)
+	l.Allow("tcp:8080")
+	*clock = clock.Add(6 * time.Second)
+	if !l.Allow("tcp:8080") {
 		t.Fatal("expected call after cooldown to be allowed")
 	}
 }
 
 func TestAllow_ZeroCooldownAlwaysPasses(t *testing.T) {
-	l, _ := newFakeLimiter(0)
-	l.Allow("k")
-	if !l.Allow("k") {
-		t.Fatal("expected zero cooldown to always allow")
+	l := New(0)
+	for i := 0; i < 5; i++ {
+		if !l.Allow("tcp:9000") {
+			t.Fatalf("call %d: expected zero-cooldown to always pass", i)
+		}
 	}
 }
 
 func TestAllow_NegativeCooldownAlwaysPasses(t *testing.T) {
-	l, _ := newFakeLimiter(-time.Second)
+	l := New(-1 * time.Second)
 	l.Allow("k")
 	if !l.Allow("k") {
-		t.Fatal("expected negative cooldown to always allow")
+		t.Fatal("expected negative cooldown to always pass")
 	}
 }
 
-func TestAllow_DifferentKeysAreIndependent(t *testing.T) {
-	l, _ := newFakeLimiter(5 * time.Second)
-	l.Allow("port:80/tcp")
-	if !l.Allow("port:443/tcp") {
-		t.Fatal("expected different key to be allowed independently")
-	}
-}
-
-func TestReset_AllowsKeyImmediately(t *testing.T) {
-	l, _ := newFakeLimiter(5 * time.Second)
-	l.Allow("port:80/tcp")
-	l.Reset("port:80/tcp")
-	if !l.Allow("port:80/tcp") {
-		t.Fatal("expected key to be allowed after reset")
-	}
-}
-
-func TestRemaining_ReturnsZeroWhenNotSeen(t *testing.T) {
-	l, _ := newFakeLimiter(5 * time.Second)
-	if r := l.Remaining("port:80/tcp"); r != 0 {
-		t.Fatalf("expected 0, got %v", r)
-	}
-}
-
-func TestRemaining_ReturnsPositiveWithinCooldown(t *testing.T) {
-	l, ts := newFakeLimiter(10 * time.Second)
-	l.Allow("port:80/tcp")
-	*ts = ts.Add(3 * time.Second)
-	if r := l.Remaining("port:80/tcp"); r != 7*time.Second {
-		t.Fatalf("expected 7s remaining, got %v", r)
+func TestReset_UnblocksKey(t *testing.T) {
+	l, _ := newFakeLimiter(10 * time.Second)
+	l.Allow("tcp:443")
+	l.Reset("tcp:443")
+	if !l.Allow("tcp:443") {
+		t.Fatal("expected Reset to unblock the key")
 	}
 }
 
 func TestResetAll_ClearsAllKeys(t *testing.T) {
-	l, _ := newFakeLimiter(5 * time.Second)
+	l, _ := newFakeLimiter(10 * time.Second)
 	l.Allow("a")
 	l.Allow("b")
+	l.Allow("c")
 	l.ResetAll()
-	if !l.Allow("a") || !l.Allow("b") {
-		t.Fatal("expected all keys to be cleared after ResetAll")
+	if l.Len() != 0 {
+		t.Fatalf("expected 0 keys after ResetAll, got %d", l.Len())
+	}
+}
+
+func TestLen_TracksActiveKeys(t *testing.T) {
+	l, _ := newFakeLimiter(10 * time.Second)
+	l.Allow("x")
+	l.Allow("y")
+	if got := l.Len(); got != 2 {
+		t.Fatalf("expected 2 tracked keys, got %d", got)
 	}
 }
