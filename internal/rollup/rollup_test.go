@@ -98,3 +98,21 @@ func TestAdd_ZeroWindowFlushesImmediately(t *testing.T) {
 		t.Fatal("timed out")
 	}
 }
+
+func TestAdd_DeduplicatesPorts(t *testing.T) {
+	done := make(chan rollup.Diff, 1)
+	r := rollup.New(40*time.Millisecond, func(d rollup.Diff) { done <- d })
+
+	// Adding the same port twice should not result in duplicates in the merged diff.
+	r.Add(makeDiff([]uint16{8080}, nil))
+	r.Add(makeDiff([]uint16{8080}, nil))
+
+	select {
+	case d := <-done:
+		if len(d.Added) != 1 {
+			t.Fatalf("expected 1 added port after dedup, got %d: %+v", len(d.Added), d.Added)
+		}
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("timed out")
+	}
+}
