@@ -1,5 +1,5 @@
 // Package ratelimit provides per-key cooldown-based rate limiting for port
-// change events. It prevents alert storms when a port flaps rapidly.
+// change alerts. It prevents alert storms when a port flaps repeatedly.
 package ratelimit
 
 import (
@@ -17,7 +17,6 @@ type Limiter struct {
 }
 
 // New returns a Limiter with the given cooldown duration.
-// A zero or negative cooldown means every call is allowed.
 func New(cooldown time.Duration) *Limiter {
 	return &Limiter{
 		cooldown: cooldown,
@@ -43,7 +42,7 @@ func (l *Limiter) Allow(key string) bool {
 }
 
 // Reset removes the cooldown record for a single key, allowing the next call
-// through immediately.
+// to pass unconditionally.
 func (l *Limiter) Reset(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

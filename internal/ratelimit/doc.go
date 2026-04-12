@@ -1,24 +1,18 @@
-// Package ratelimit implements per-key cooldown-based rate limiting for
-// portwatch alert suppression.
+// Package ratelimit implements a simple per-key cooldown rate limiter suited
+// for suppressing repeated alerts about the same port.
 //
-// # Overview
-//
-// When portwatch detects port changes it may emit alerts through one or more
-// notifier backends. Without rate limiting, a flapping port (one that opens
-// and closes rapidly) can flood log files or external notification services.
-//
-// The Limiter type tracks the last time an alert was emitted for a given key
-// (typically a string like "80/tcp" or "added:443/tcp") and suppresses
-// repeated alerts that arrive before the configured cooldown has elapsed.
-//
-// # Usage
+// Usage:
 //
 //	limiter := ratelimit.New(30 * time.Second)
 //
-//	if limiter.Allow("added:8080/tcp") {
-//	    notifier.Notify(diff)
+//	if limiter.Allow("tcp:8080:added") {
+//		// send alert
 //	}
 //
-// A cooldown of zero or any negative value disables rate limiting entirely,
-// which is useful during testing or when the operator explicitly opts out.
+// Keys are arbitrary strings; callers typically encode the port address and
+// event kind into the key so that different event types for the same port are
+// tracked independently.
+//
+// A zero or negative cooldown disables rate limiting — every call returns true.
+// ResetAll can be used to flush all state, e.g. after a configuration reload.
 package ratelimit
