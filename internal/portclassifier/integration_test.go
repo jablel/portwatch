@@ -9,12 +9,11 @@ import (
 )
 
 func TestClassifier_ConcurrentClassify(t *testing.T) {
-	c := portclassifier.New(nil)
+	c := portclassifier.New()
 	ports := []scanner.Port{
-		{Number: 22, Protocol: "tcp"},
-		{Number: 80, Protocol: "tcp"},
-		{Number: 8080, Protocol: "tcp"},
-		{Number: 60000, Protocol: "udp"},
+		{Number: 80, Proto: "tcp"},
+		{Number: 8080, Proto: "tcp"},
+		{Number: 55000, Proto: "udp"},
 	}
 
 	var wg sync.WaitGroup
@@ -31,31 +30,33 @@ func TestClassifier_ConcurrentClassify(t *testing.T) {
 }
 
 func TestClassifier_ClassifyAll_AllPortsLabelled(t *testing.T) {
-	c := portclassifier.New(nil)
-	ports := []scanner.Port{
-		{Number: 443, Protocol: "tcp"},
-		{Number: 3306, Protocol: "tcp"},
-		{Number: 55000, Protocol: "udp"},
+	c := portclassifier.New()
+	var ports []scanner.Port
+	for i := uint16(0); i < 100; i++ {
+		ports = append(ports, scanner.Port{Number: i * 655, Proto: "tcp"})
 	}
-
-	results := c.ClassifyAll(ports)
-	if len(results) != len(ports) {
-		t.Fatalf("expected %d results, got %d", len(ports), len(results))
+	res := c.ClassifyAll(ports)
+	if len(res) != len(ports) {
+		t.Fatalf("expected %d results, got %d", len(ports), len(res))
 	}
-	for _, r := range results {
-		if r.Tier == "" {
-			t.Errorf("port %d has empty tier", r.Port.Number)
+	for _, p := range ports {
+		if _, ok := res[p.String()]; !ok {
+			t.Errorf("port %s missing from ClassifyAll result", p.String())
 		}
 	}
 }
 
 func TestClassifier_CustomOverridesBuiltin(t *testing.T) {
-	custom := map[uint16]string{80: "my-web"}
-	c := portclassifier.New(custom)
+	c := portclassifier.New()
+	p := scanner.Port{Number: 443, Proto: "tcp"}
 
-	p := scanner.Port{Number: 80, Protocol: "tcp"}
-	r := c.Classify(p)
-	if r.Label != "my-web" {
-		t.Errorf("expected label 'my-web', got %q", r.Label)
+	if got := c.Classify(p); got != portclassifier.TierSystem {
+		t.Fatalf("pre-override: expected system, got %s", got)
+	}
+
+	c.Override(p, portclassifier.TierRegistered)
+
+	if got := c.Classify(p); got != portclassifier.TierRegistered {
+		t.Fatalf("post-override: expected registered, got %s", got)
 	}
 }

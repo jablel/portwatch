@@ -1,62 +1,67 @@
-// Package portclassifier categorises ports into well-known service tiers
-// (system, registered, dynamic) and exposes a simple Classify API.
+// Package portclassifier assigns a tier label to each scanned port
+// based on its number: system (0–1023), registered (1024–49151),
+// or dynamic (49152–65535). Custom overrides take precedence.
 package portclassifier
 
-import "github.com/user/portwatch/internal/scanner"
+import (
+	"fmt"
+	"sync"
 
-// Tier represents the classification tier of a port number.
+	"github.com/user/portwatch/internal/scanner"
+)
+
+// Tier represents the classification bucket for a port.
 type Tier string
 
 const (
-	// TierSystem covers IANA system (well-known) ports 0-1023.
-	TierSystem Tier = "system"
-	// TierRegistered covers IANA registered ports 1024-49151.
+	TierSystem     Tier = "system"
 	TierRegistered Tier = "registered"
-	// TierDynamic covers ephemeral / dynamic ports 49152-65535.
-	TierDynamic Tier = "dynamic"
+	TierDynamic    Tier = "dynamic"
 )
 
-// Result holds the classification outcome for a single port.
-type Result struct {
-	Port scanner.Port
-	Tier Tier
-}
-
-// Classifier classifies ports into tiers.
+// Classifier assigns tiers to ports.
 type Classifier struct {
-	overrides map[uint16]Tier
+	mu        sync.RWMutex
+	overrides map[string]Tier // key: "<port>/<proto>"
 }
 
-// New returns a Classifier with no custom overrides.
+// New returns a ready-to-use Classifier.
 func New() *Classifier {
-	return &Classifier{overrides: make(map[uint16]Tier)}
+	return &Classifier{overrides: make(map[string]Tier)}
 }
 
-// Override registers a custom tier for a specific port number, taking
-// precedence over the default range-based classification.
-func (c *Classifier) Override(port uint16, tier Tier) {
-	c.overrides[port] = tier
+// Override sets a custom tier for a specific port+protocol pair.
+func (c *Classifier) Override(p scanner.Port, t Tier) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.overrides[portKey(p)] = t
 }
 
-// Classify returns the Tier for a single scanner.Port.
-func (c *Classifier) Classify(p scanner.Port) Result {
-	if t, ok := c.overrides[uint16(p.Port)]; ok {
-		return Result{Port: p, Tier: t}
+// Classify returns the tier for p, respecting any registered override.
+func (c *Classifier) Classify(p scanner.Port) Tier {
+	c.mu.RLock()
+	if t, ok := c.overrides[portKey(p)]; ok {
+		c.mu.RUnlock()
+		return t
 	}
-	return Result{Port: p, Tier: tierForNumber(p.Port)}
+	c.mu.RUnlock()
+	return tierForNumber(p.Number)
 }
 
-// ClassifyAll classifies a slice of ports and returns a Result per port.
-func (c *Classifier) ClassifyAll(ports []scanner.Port) []Result {
-	out := make([]Result, len(ports))
-	for i, p := range ports {
-		out[i] = c.Classify(p)
+// ClassifyAll returns a map from each port's String() representation to its tier.
+func (c *Classifier) ClassifyAll(ports []scanner.Port) map[string]Tier {
+	out := make(map[string]Tier, len(ports))
+	for _, p := range ports {
+		out[p.String()] = c.Classify(p)
 	}
 	return out
 }
 
-// tierForNumber maps a raw port number to its default Tier.
-func tierForNumber(n int) Tier {
+func portKey(p scanner.Port) string {
+	return fmt.Sprintf("%d/%s", p.Number, p.Proto)
+}
+
+func tierForNumber(n uint16) Tier {
 	switch {
 	case n <= 1023:
 		return TierSystem
